@@ -1,51 +1,45 @@
 <?php
 defined('_SMSNOTIFY') or die('Restricted access');
-//--------------------------SMSME.gr API v0.1-----------------------------------------
+//--------------------------SMSME.gr API-----------------------------------------
 function smsmegr_gatewaydetails()
 {
     $details = array();
-    $details["name"] = "SMSMe.gr Gateway";
+    $details["name"] = "SMSMe.gr";
     $details["country"] = "Greece / International";
     $details["site"] = "https://www.smsme.gr";
     $details["pricelist"] = "https://smsme.gr/timokatalogos.aspx";
     $details["developer"] = "pRieStaKos | info@cubric.gr";
     $details["schedulesms"] = true; /*set true if gateway supports sms scheduling*/
     $details["unicodesupport"] = false; /*set true if gateway supports Unicode sms*/
-    $details["params"]["Originator"] = array("type" => "text", "value" => "", "name" => "Originator", "description" => "If you leave it empty it will get the global SenderID value from <<Settings>>");
+    $details["params"]["customsender"] = array("type" => "text", "value" => "", "name" => "Originator", "description" => "If you leave it empty it will get the global SenderID value from Settings");
 
     return $details;
 }
 
 function smsmegr_sendsms($params)
 {
-    $params["Username"] = urlencode($params["Username"]);
-    $params["Password"] = urlencode($params["Password"]);
-    $params["Originator"] = (!empty($params["Originator"])) ? trim($params["Originator"]) : trim($params["senderid"]);
-    $params["Mobile"] = urlencode($params["Mobile"]); //Phone(s) seperated by commas
+    $params["senderid"] = (!empty($params["customsender"])) ? trim($params["customsender"]) : trim($params["senderid"]);
+    $params["to"] = urlencode($params["to"]); //Phone(s) separated by commas
 
-    /*DEBUG*/
-    $paramsString = print_r($params, true);
-    #echo $paramsString; //Debug via print to screen
-    #mail('my@email.com','SMS Notify Debug',$paramsString); //Debug via e-mail
-
-    //If your gateway supports SMS Scheduling EXAMPLE
-    $smsDate = "";
-    if ($params["smsDate"] != '') {
-        $datetime = date('yyyy-mm-dd HH:mm:ss', $params["smsDate"]); // change date format
-        $smsDate = "&smsDate=" . $datetime; // add param
+    //If your gateway supports SMS Scheduling
+    $schedule = "";
+    if ($params["schedule_time"] != '' && $params["schedule_date"] != '') {
+        $datetime = date('yyyy-mm-dd HH:mm:ss', strtotime($params["schedule_date"] . ' ' . $params["schedule_time"])); // change date format
+        $schedule = "&smsDate=" . $datetime; // add param
     }
-    $params["Body"] = smscut($params["message"], 160); //short sms body
-    if ($params["unicode"] == "yes") $params["Body"] = unicode($params["Body"]); //unicode() converts ascci text to unicode data
+    if ($params["longsms"] != 'yes') $params["message"] = smscut($params["message"], 160); //short sms
+    if ($params["unicode"] == "yes") $params["message"] = unicode($params["message"]); //unicode() converts ascii text to unicode data
 
     #EXAMPLE
-    $url = "http://webservice.smsme.gr/SendSmsRequest.aspx?Username=" . urlencode($params["Username"]) . "&Password=" . urlencode($params["Password"]) . '&Body=' . urlencode($params["Body"]);
-    $url .= "&Mobile=" . $params["Mobile"] . "&Originator=" . $params["Originator"];
-    if (!empty($smsDate)) $url .= $smsDate; //if supported
+    $url = "http://webservice.smsme.gr/SendBulkSmsRequest.aspx?Username=" . urlencode($params["username"]) . "&Password=" . urlencode($params["password"]) . '&Originator=' . urlencode($params["senderid"]);
+    $url .= "&Mobile=" . $params["to"] . "&Body=" . $params["message"];
+    if (!empty($schedule)) $url .= $schedule; //if supported
+    if ($params["unicode"] == "yes") $url .= '&unicode=1'; //if supported
 
     $data = getRemoteData($url); // Send request
     /*Returns
-      $data["response"]; =>The response
-      $data["error"]; =>Connections errors (rare)
+      $data["response"]; => The response
+      $data["error"]; => Connections errors (rare)
     */
 
     //Communications with gateway API server error check
@@ -65,14 +59,23 @@ function smsmegr_sendsms($params)
             $values['error'] = $data["response"]; //Unknown reason-response
         }
     }
-    logger('send.smsmegr', $url, $data, array_merge($values, $params), array($params["Username"], $params["Password"])); //ModuleLogging
+    logger('send.smsmegr', $url, $data, array_merge($values, $params), array($params["username"], $params["password"])); //ModuleLogging
 
+    /*   Multiply IDs/Errors Support
+        $values["smsid"] and $values['error'] can contain array. Example:
+        $ids[0]='123456';
+        $errors[0]=null;
+        $ids[1]='err'.time();
+        $errors[1]='Invalid Sender ID';
+        $values['error']=$errors;
+        $values['smsid']=$ids;
+    */
     return $values;
 }
 
 function smsmegr_getSmsBalance($params)
 {
-    $url = "http://webservice.smsme.gr/login.aspx?Username=" . urlencode($params["Username"]) . "&Password=" . urlencode($params["Password"]);
+    $url = "http://webservice.smsme.gr/login.aspx?Username=" . urlencode($params["username"]) . "&Password=" . urlencode($params["password"]);
     $data = getRemoteData($url);
 
     //Communications with gateway API server error check
@@ -80,9 +83,9 @@ function smsmegr_getSmsBalance($params)
 
     //example $data["response"]="Credit:1200";
     $values = array();
-    //$send = explode(":", $data["response"]);
-    if (is_numeric($data["response"])) {
-        $values["credits"] = $data["response"];
+    $send = explode(":", $data["response"]);
+    if ($send[0] == "Credit") {
+        $values["credits"] = $send[1];
     } else {
         $values["error"] = $data["response"];
         $values["credits"] = 0;
@@ -92,13 +95,10 @@ function smsmegr_getSmsBalance($params)
 
 function smsmegr_getsmsstatus($params)
 {
-    $url = "http://webservice.smsme.gr/Reports.aspx?Username=" . urlencode($params["Username"]) . "&Password=" . urlencode($params["Password"]) . "&Mobile=" . $params["Mobile"];
+    $datetime = date('yyyy-mm-dd HH:mm:ss', strtotime($params["schedule_date"] . ' ' . $params["schedule_time"]));
 
-    $Sdate = date('yyyy-mm-dd HH:mm:ss', $params["Sdate"]); // change start date format
-    $Edate = date('yyyy-mm-dd HH:mm:ss', $params["Edate"]); // change end date format
-
-    $url .= "&Sdate=" . $Sdate . "&Edate=" . $Edate;
-
+    $url = "http://webservice.smsme.gr/Reports.aspx?Username=" . urlencode($params["username"]) . "&Password=" . urlencode($params["password"]) . "&Sdate=" . $datetime . "&Edate=" . $datetime;
+    $url .= "&Mobile=" . $params["to"];
     $data = getRemoteData($url);
 
     //$data["response"]; =>The response
@@ -127,7 +127,7 @@ function smsmegr_getsmsstatus($params)
             break;
         case '003':
         case '004':
-            $error_code = 1; //Success
+            $error_code = 1; //Susccess
             break;
         case '005':
         case '006':

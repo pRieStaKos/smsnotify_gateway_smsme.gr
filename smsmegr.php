@@ -78,18 +78,18 @@ function smsmegr_getSmsBalance($params)
     $url = "http://webservice.smsme.gr/login.aspx?Username=" . urlencode($params["username"]) . "&Password=" . urlencode($params["password"]);
     $data = getRemoteData($url);
 
-    //Communications with gateway API server error check
-    if (!empty($data['error'])) return array('error' => $data['error'], 'credits' => 0); //stop because of communication error
+    // Communications with gateway API server error check
+    if (!empty($data['error'])) return array('error' => $data['error'], 'credits' => 0); // stop because of communication error
 
-    //example $data["response"]="Credit:1200";
-    $values = array();
-    $send = explode(":", $data["response"]);
-    if ($send[0] == "Credit") {
-        $values["credits"] = $send[1];
-    } else {
-        $values["error"] = $data["response"];
-        $values["credits"] = 0;
-    }
+    // Υπόλοιπο Λογαριασμού σε ευρώ με 3 δεκαδικά ψηφία
+    // -- $data["response"]="0,932" ή
+    // Κείμενο Σφάλματος
+    // --- BAD USER (δεν βρέθηκε ο χρήστης με το συγκεκριμένο username και password)
+    // --- ERROR PASSWORD (δεν δόθηκε password)
+    // --- ERROR USERNAME (δεν δόθηκε username)
+
+    $values["credits"] = $data["response"];
+
     return $values;
 }
 
@@ -101,51 +101,24 @@ function smsmegr_getsmsstatus($params)
     $url .= "&Mobile=" . $params["to"];
     $data = getRemoteData($url);
 
-    //$data["response"]; =>The response
-    //$data["error"]; =>Connections errors (rare)
+    // $data["response"]; => The response
+    // $data["error"]; => Connections errors (rare)
 
-    //Communications with gateway API server error check
-    if (!empty($data['error'])) return array('status' => 2, 'cost' => 0); //stop because of communication error,we don't pass the error because may it's temporary so we set it as Pending (status=2)
+    // Communications with gateway API server error check
+    if (!empty($data['error'])) return array('status' => 2, 'cost' => 0); // stop because of communication error,we don't pass the error because may it's temporary so we set it as Pending (status=2)
 
-    //example $data["response"]="003,id12121212,2c,20-08-2013";
-    $parts = explode(',', $data["response"]);
+    $xmlobj = simplexml_load_string($data["response"]);
 
-    /* ====== $error_code vars ====== */
-    # 0 Not Delivered Failed/ Error (Permanent)
-    # 1 Delivered Succesfully (Permanent)
-    # 2 Sent but Pending (Not Permanent) *
-    # 3 Unknown (Not Permanent) *
+    $status = $xmlobj->ReportStatus;
+    $messid = $xmlobj->ReportID;
+    $cost = $xmlobj->Cost;
 
-    switch ($parts[0]) {
-        case '001':
-            $error_code = 3; // Unknown
-            break;
-        case '002':
-        case '008':
-        case '011':
-            $error_code = 2; //Pending
-            break;
-        case '003':
-        case '004':
-            $error_code = 1; //Susccess
-            break;
-        case '005':
-        case '006':
-        case '007':
-        case '009':
-        case '010':
-        case '012':
-            $error_code = 0; // Failed
-            break;
-        default:
-            $error_code = 3;
+    if (empty($data["error"]) && !$data["response"]) {
+        $values["smsid"] = $messid;
+    } else {
+        $values["error"] = $data["error"];
     }
-
-    $values = array();
-    $values["status"] = $error_code;
-    if ($error_code == 0) $values['error'] = smsmegr_errorcodes($parts[0]);
-    $values["cost"] = str_replace('c', '', $parts[1]); // if cost is available pass the value here as number
-    return $values;
+    return $messid;
 }
 
 //Helper Function!

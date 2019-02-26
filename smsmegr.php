@@ -118,7 +118,7 @@ function smsmegr_getsmsstatus($params)
     } else {
         $values["error"] = $data["error"];
     }
-    return $messid;
+    return $status;
 }
 
 //Helper Function!

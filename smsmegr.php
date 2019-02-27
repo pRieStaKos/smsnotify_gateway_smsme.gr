@@ -19,57 +19,60 @@ function smsmegr_gatewaydetails()
 function smsmegr_sendsms($params)
 {
     $params["senderid"] = (!empty($params["customsender"])) ? trim($params["customsender"]) : trim($params["senderid"]);
-    $params["to"] = urlencode($params["to"]); //Phone(s) separated by commas
+    $params["to"] = urlencode($params["to"]); // Phone(s) separated by commas
 
-    //If your gateway supports SMS Scheduling
+    // If your gateway supports SMS Scheduling
     $schedule = "";
     if ($params["schedule_time"] != '' && $params["schedule_date"] != '') {
         $datetime = date('yyyy-mm-dd HH:mm:ss', strtotime($params["schedule_date"] . ' ' . $params["schedule_time"])); // change date format
-        $schedule = "&smsDate=" . $datetime; // add param
+        $schedule = '&smsDate=' . $datetime; // add param
     }
-    if ($params["longsms"] != 'yes') $params["message"] = smscut($params["message"], 160); //short sms
-    if ($params["unicode"] == "yes") $params["message"] = unicode($params["message"]); //unicode() converts ascii text to unicode data
+    if ($params["longsms"] != 'yes') $params["message"] = smscut($params["message"], 160); // short sms
+    if ($params["unicode"] == "yes") $params["message"] = unicode($params["message"]); // unicode() converts ascii text to unicode data
 
     #EXAMPLE
-    $url = "http://webservice.smsme.gr/SendBulkSmsRequest.aspx?Username=" . urlencode($params["username"]) . "&Password=" . urlencode($params["password"]) . '&Originator=' . urlencode($params["senderid"]);
-    $url .= "&Mobile=" . $params["to"] . "&Body=" . $params["message"];
-    if (!empty($schedule)) $url .= $schedule; //if supported
-    if ($params["unicode"] == "yes") $url .= '&unicode=1'; //if supported
+    $url = 'http://webservice.smsme.gr/SendBulkSmsRequest.aspx?Username=' . $params["username"] . '&Password=' . $params["password"] . '&Originator=' . $params["senderid"];
+    $url .= '&Mobile=' . $params["to"] . '&Body=' . $params["message"];
+    if (!empty($schedule)) $url .= $schedule; // if supported
+    if ($params["unicode"] == "yes") $url .= '&unicode=1'; // if supported
 
     $data = getRemoteData($url); // Send request
-    /*Returns
-      $data["response"]; => The response
-      $data["error"]; => Connections errors (rare)
+    /* Returns
+       $data["response"]; => The response
+       $data["error"]; => Connections errors (rare)
     */
 
-    //Communications with gateway API server error check
-    if (!empty($data['error']) || empty($data["response"])) return array('error' => $data['error'], 'smsid' => time()); //stop because of communication error
+    // Communications with gateway API server error check
+    if (!empty($data['error']) || empty($data["response"])) return array('error' => $data['error'], 'smsid' => time()); // stop because of communication error
 
-    //example $data["response"]="OK,id12121212,20-08-2013"; or $data["response"]="ERROR:005";
+    // Example $data["response"] =
+    // OK: 3
+    // 306912345678:12345
+    // 306912345679:12346
+    // 306912345670:12347
+    // or
+    // BAD USER (δεν βρέθηκε ο χρήστης με το συγκεκριμένο username και password)
+    // ERROR PASSWORD (δεν δόθηκε password)
+    // ERROR USERNAME (δεν δόθηκε username)
+    // ERROR ORIGINATOR (δεν δόθηκε αποστολές μηνύματος)
+    // ERROR Mobile (δεν δόθηκε παραλήπτης)
+    // ERROR BODY (δεν δόθηκε περιεχόμενο μηνύματος)
+    // NOT ENOUGH CREDITS (Ο πελάτης δεν έχει αρκετά χρήματα στο λογαριασμό του)
+    // EXCEPTION ERROR (παρουσιάστηκε πρόβλημα κατά την αποστολή παρακαλώ δοκιμάστε ξανά.)
+    // WRONG NUMBER (Ο αριθμός παραλήπτη που δόθηκε δεν ήταν σωστός)
+    // NO CREDITS (Ο πελάτης δεν έχει χρήματα στο λογαριασμό του)
+    // BAD ORIGINATOR (ο αποστολές δεν είναι σωστός - πάνω απο 11 χαρακτήρες)
+    // BAD DATE (η ημερομηνία που δόθηκε στο πεδίο smsDate δεν έχει τη σωστή μορφή - yyyy-mm-dd HH:mm:ss)
 
     $values = array();
-    $parts = explode(',', $data["response"]);
+    $parts = explode(':', $data["response"]);
     if ($parts[0] == 'OK') {
         $values["smsid"] = $parts[1]; //// REQUIRED to able to get the status smsmegr_getsmsstatus()
     } else {
-        $parts = explode(':', $data["response"]);
-        if ($parts[0] == 'ERROR') {
-            $values['error'] = smsmegr_errorcodes($parts[1]);
-        } else {
-            $values['error'] = $data["response"]; //Unknown reason-response
-        }
+        $values['error'] = $data["response"]; // Error reason-response
     }
-    logger('send.smsmegr', $url, $data, array_merge($values, $params), array($params["username"], $params["password"])); //ModuleLogging
+    logger('send.smsmegr', $url, $data, array_merge($values, $params), array($params["username"], $params["password"])); // ModuleLogging
 
-    /*   Multiply IDs/Errors Support
-        $values["smsid"] and $values['error'] can contain array. Example:
-        $ids[0]='123456';
-        $errors[0]=null;
-        $ids[1]='err'.time();
-        $errors[1]='Invalid Sender ID';
-        $values['error']=$errors;
-        $values['smsid']=$ids;
-    */
     return $values;
 }
 
@@ -107,11 +110,11 @@ function smsmegr_getsmsstatus($params)
     // Communications with gateway API server error check
     if (!empty($data['error'])) return array('status' => 2, 'cost' => 0); // stop because of communication error,we don't pass the error because may it's temporary so we set it as Pending (status=2)
 
-    $xmlobj = simplexml_load_string($data["response"]);
+    $xml = simplexml_load_string($data["response"]);
 
-    $status = $xmlobj->ReportStatus;
-    $messid = $xmlobj->ReportID;
-    $cost = $xmlobj->Cost;
+    $status = $xml->ReportStatus;
+    $messid = $xml->ReportID;
+    $cost = $xml->Cost;
 
     if (empty($data["error"]) && !$data["response"]) {
         $values["smsid"] = $messid;

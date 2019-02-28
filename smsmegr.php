@@ -31,8 +31,8 @@ function smsmegr_sendsms($params)
     if ($params["unicode"] == "yes") $params["message"] = unicode($params["message"]); // unicode() converts ascii text to unicode data
 
     #EXAMPLE
-    $url = 'http://webservice.smsme.gr/SendBulkSmsRequest.aspx?Username=' . $params["username"] . '&Password=' . $params["password"] . '&Originator=' . $params["senderid"];
-    $url .= '&Mobile=' . $params["to"] . '&Body=' . $params["message"];
+    $url = "http://webservice.smsme.gr/SendBulkSmsRequest.aspx?Username=" . $params["username"] . "&Password=" . $params["password"] . "&Originator=" . $params["senderid"];
+    $url .= "&Mobile=" . $params["to"] . "&Body=" . $params["message"];
     if (!empty($schedule)) $url .= $schedule; // if supported
     if ($params["unicode"] == "yes") $url .= '&unicode=1'; // if supported
 
@@ -46,10 +46,7 @@ function smsmegr_sendsms($params)
     if (!empty($data['error']) || empty($data["response"])) return array('error' => $data['error'], 'smsid' => time()); // stop because of communication error
 
     // Example $data["response"] =
-    // OK: 3
-    // 306912345678:12345
-    // 306912345679:12346
-    // 306912345670:12347
+    // OK: 1 12345:306912345678
     // or
     // BAD USER (δεν βρέθηκε ο χρήστης με το συγκεκριμένο username και password)
     // ERROR PASSWORD (δεν δόθηκε password)
@@ -65,9 +62,9 @@ function smsmegr_sendsms($params)
     // BAD DATE (η ημερομηνία που δόθηκε στο πεδίο smsDate δεν έχει τη σωστή μορφή - yyyy-mm-dd HH:mm:ss)
 
     $values = array();
-    $parts = explode(':', $data["response"]);
-    if ($parts[0] == 'OK') {
-        $values["smsid"] = $parts[1]; //// REQUIRED to able to get the status smsmegr_getsmsstatus()
+    $parts = explode(' ', $data["response"]);
+    if ($parts[0] == 'OK:') {
+        $values["smsid"] = $parts[3]; //// REQUIRED to able to get the status smsmegr_getsmsstatus()
     } else {
         $values['error'] = $data["response"]; // Error reason-response
     }

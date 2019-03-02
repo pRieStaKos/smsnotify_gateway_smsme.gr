@@ -113,7 +113,6 @@ function smsmegr_getsmsstatus($params)
     if (strpos($params["smsid"], "err_") !== false) return array('status' => 0);
 
     $url = "http://webservice.smsme.gr/Reports.aspx?Username=" . urlencode($params["username"]) . "&Password=" . urlencode($params["password"]) . "&Sdate=" . urlencode(date('Y-m-d H:i:s', strtotime('-1 day'))) . "&Edate=" . urlencode(date('Y-m-d H:i:s'));
-    $url .= '&Mobile=' . $params["to"];
 
     $data = getRemoteData($url);
 

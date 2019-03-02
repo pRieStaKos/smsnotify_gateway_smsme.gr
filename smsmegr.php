@@ -10,8 +10,8 @@ function smsmegr_gatewaydetails()
     $details["site"] = "https://www.smsme.gr";
     $details["pricelist"] = "https://smsme.gr/timokatalogos.aspx";
     $details["developer"] = "pRieStaKos | info@cubric.gr";
-    $details["schedulesms"] = true; /*set true if gateway supports sms scheduling*/
-    $details["unicodesupport"] = false; /*set true if gateway supports Unicode sms*/
+    $details["schedulesms"] = true; /* set true if gateway supports sms scheduling*/
+    $details["unicodesupport"] = false; /* set true if gateway supports Unicode sms*/
     $details["params"]["customsender"] = array("type" => "text", "value" => "", "name" => "Originator", "description" => "If you leave it empty it will get the global SenderID value from Settings");
 
     return $details;
@@ -31,8 +31,8 @@ function smsmegr_sendsms($params)
     if ($params["longsms"] != "yes") $params["message"] = smscut($params["message"], 160); // short sms
     if ($params["unicode"] == "yes") $params["message"] = unicode($params["message"]); // unicode() converts ascii text to unicode data
 
-    #EXAMPLE
-    $url = "http://webservice.smsme.gr/SendBulkSmsRequest.aspx?Username=" . $params["username"] . "&Password=" . $params["password"] . "&Originator=" . $params["senderid"];
+    # EXAMPLE
+    $url = "http://webservice.smsme.gr/SendBulkSmsRequest.aspx?Username=" . urlencode($params["username"]) . "&Password=" . urlencode($params["password"]) . "&Originator=" . $params["senderid"];
     $url .= "&Mobile=" . $params["to"] . "&Body=" . $params["message"];
     if (!empty($schedule)) $url .= $schedule; // if supported
     if ($params["unicode"] == "yes") $url .= "&unicode=1"; // if supported
@@ -61,17 +61,24 @@ function smsmegr_sendsms($params)
     // BAD DATE (η ημερομηνία που δόθηκε στο πεδίο smsDate δεν έχει τη σωστή μορφή - yyyy-mm-dd HH:mm:ss)
 
     $values = array();
-    // $data["response"] = OK: 1 12345:306912345678
-    $parts = explode(" ", $data["response"]);
-    if ($parts[0] == 'OK:') {
-        $sms = explode(":", $parts[2]);
-        $values["smsid"] = $sms[0]; // REQUIRED for status smsmegr_getsmsstatus()
+    if (strpos($data["response"], 'OK') === false) {
+        $values["smsid"] = 'err_' . time();
+        $values["error"] = $data["response"];
     } else {
-        $values["error"] = $data["response"]; // Error response-reason
+        $lines = explode("\n", $data["response"]);
+        foreach ($lines as $idx => $line) {
+            if ($idx == 0 || empty($line)) continue; // skip OK message
+            list($smsid, $num) = explode(':', $line, 2);
+            $values["smsid"][$idx - 1] = $smsid;
+            $values["error"][$idx - 1] = null;
+        }
     }
-    logger("send.smsmegr", $url, $data, array_merge($values, $params), array($params["username"], $params["password"])); // Module Logging
-    // $paramsString = print_r($parts,true);
-    // mail('ianastasiadis@cubric.gr','SMS Notify Debug',$paramsString); // Debug via e-mail
+    // debug
+    // print_data($data["response"]);
+    // print_data($values);
+
+    logger("send.smsmegr", $url, $data, array('RETURN' => $values, 'PARAMS' => $params, 'API' => $data), array($params["username"], $params["password"])); // Module Logging
+
     return $values;
 }
 
@@ -90,34 +97,58 @@ function smsmegr_getSmsBalance($params)
     // --- ERROR PASSWORD (δεν δόθηκε password)
     // --- ERROR USERNAME (δεν δόθηκε username)
 
-    $values["credits"] = $data["response"];
-
+    $values = array();
+    $credits = str_replace(',', '.', $data["response"]);
+    if (is_numeric($credits)) {
+        $values["credits"] = (float)$credits;
+    } else {
+        $values["credits"] = 0;
+        $values["error"] = $data["response"];
+    }
     return $values;
 }
 
 function smsmegr_getsmsstatus($params)
 {
-    $datetime = date("yyyy-mm-dd HH:mm:ss", strtotime($params["schedule_date"] . " " . $params["schedule_time"]));
+    if (strpos($params["smsid"], "err_") !== false) return array('status' => 0);
 
-    $url = "http://webservice.smsme.gr/Reports.aspx?Username=" . urlencode($params["username"]) . "&Password=" . urlencode($params["password"]) . "&Sdate=" . $datetime . "&Edate=" . $datetime;
-    $url .= "&Mobile=" . $params["to"];
+    $url = "http://webservice.smsme.gr/Reports.aspx?Username=" . urlencode($params["username"]) . "&Password=" . urlencode($params["password"]) . "&Sdate=" . urlencode(date('Y-m-d H:i:s', strtotime('-1 day'))) . "&Edate=" . urlencode(date('Y-m-d H:i:s'));
+    $url .= '&Mobile=' . $params["to"];
+
     $data = getRemoteData($url);
-
-    // $data["response"]; => The response
-    // $data["error"]; => Connections errors (rare)
 
     // Communications with gateway API server error check
     if (!empty($data["error"])) return array("status" => 2, "cost" => 0); // stop because of communication error,we don't pass the error because may it's temporary so we set it as Pending (status=2)
 
+    $values = array();
+
     $xml = simplexml_load_string($data["response"]);
+    $reports = json_decode(json_encode($xml));
+    $mobiles = explode(',', $params['mobile']);
 
-    $messid = $xml->ReportID;
-
-    if (empty($data["error"]) && !$data["response"]) {
-        $values["smsid"] = $messid;
-    } else {
-        $values["error"] = $data["error"];
+    foreach ($reports->Report as $report) {
+        if (in_array($report->Mobile, $mobiles) || $report->ReportID == $params["smsid"]) {
+            switch ($report->ReportStatus) {
+                case 'Delivered':
+                    $code = 1;
+                    break;
+                case 'Fail':
+                case 'Expired':
+                    $code = 0;
+                    break;
+                case 'Waiting':
+                case 'Waiting for delivery':
+                default:
+                    $code = 2;
+            }
+            $values["smsid"] = $report->ReportID;
+            $values["status"] = $code;
+            $values["cost"] = (float)$report->Cost;
+            break;
+        }
     }
+
+    if (!count($values)) $values['status'] = 2; // Production should be 0 (Not delivered)
     return $values;
 }
 
